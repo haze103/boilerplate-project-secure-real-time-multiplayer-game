@@ -3,38 +3,27 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const expect = require('chai');
 const socket = require('socket.io');
-const nocache = require('nocache');
+const helmet = require('helmet'); // Must be version 3.21.3
 
 const fccTestingRoutes = require('./routes/fcctesting.js');
 const runner = require('./test-runner.js');
 
 const app = express();
 
-// --- CRITICAL SECURITY SECTION ---
+// --- SECURITY HEADERS (Helmet v3.21.3) ---
+// 1. Prevent sniffing
+app.use(helmet.noSniff());
 
-// 1. Disable the default "X-Powered-By: Express" header so we can spoof it later
-app.disable('x-powered-by');
+// 2. Prevent XSS
+app.use(helmet.xssFilter());
 
-// 2. Force Security Headers manually
-// This middleware runs for EVERY request before anything else
-app.use(function (req, res, next) {
-  // Test 16: Prevent sniffing
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  
-  // Test 17: Prevent XSS (Browser-side)
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  
-  // Test 19: Spoof the Powered-By header
-  res.setHeader('X-Powered-By', 'PHP 7.4.3');
-  
-  next();
-});
+// 3. Prevent Caching (Works in v3.21.3)
+app.use(helmet.noCache());
 
-// 3. Prevent Caching (Test 18)
-// nocache() is more robust than manual headers for this specific test
-app.use(nocache());
+// 4. Spoof Powered-By (Works in v3.21.3)
+app.use(helmet.hidePoweredBy({ setTo: 'PHP 7.4.3' }));
 
-// ---------------------------------
+// -----------------------------------------
 
 app.use('/public', express.static(process.cwd() + '/public'));
 app.use('/assets', express.static(process.cwd() + '/assets'));
