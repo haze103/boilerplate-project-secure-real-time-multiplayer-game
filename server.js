@@ -11,23 +11,24 @@ const runner = require('./test-runner.js');
 const app = express();
 
 // --- 1. SECURITY & HEADER CONFIGURATION ---
-// Place this BEFORE static files to ensure headers are applied to everything
-
-// Prevent sniffing the MIME type
-app.use(helmet.noSniff());
-
-// Prevent XSS attacks
-app.use(helmet.xssFilter());
-
-// Spoof the "Powered By" header
-app.use(helmet.hidePoweredBy({ setTo: 'PHP 7.4.3' }));
-
-// Manually set cache control headers to satisfy all test requirements
+// We manually set these headers to satisfy all FreeCodeCamp tests (16-19)
+// preventing issues with newer versions of Helmet.
 app.use(function (req, res, next) {
+  // Prevent MIME sniffing (Test 16)
+  res.set('X-Content-Type-Options', 'nosniff');
+
+  // Prevent XSS attacks (Test 17)
+  res.set('X-XSS-Protection', '1; mode=block');
+
+  // Prevent Caching (Test 18)
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
   res.set('Surrogate-Control', 'no-store');
+
+  // Spoof the Powered-By header (Test 19)
+  res.set('X-Powered-By', 'PHP 7.4.3');
+
   next();
 });
 
