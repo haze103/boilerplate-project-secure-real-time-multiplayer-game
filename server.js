@@ -3,29 +3,21 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const expect = require('chai');
 const socket = require('socket.io');
-const helmet = require('helmet'); // Must be version 3.21.3
+const helmet = require('helmet');
+const cors = require('cors');
 
 const fccTestingRoutes = require('./routes/fcctesting.js');
 const runner = require('./test-runner.js');
 
 const app = express();
 
-// --- SECURITY HEADERS (Helmet v3.21.3) ---
-// These must be applied BEFORE any routes or static files
-
-// 1. Prevent MIME type sniffing (Test 16)
-app.use(helmet.noSniff());
-
-// 2. Prevent XSS attacks (Test 17)
-app.use(helmet.xssFilter());
-
-// 3. Disable caching (Test 18)
-app.use(helmet.noCache());
-
-// 4. Hide/Spoof X-Powered-By header (Test 19)
-app.use(helmet.hidePoweredBy({ setTo: 'PHP 7.4.3' }));
-
-// -----------------------------------------
+app.use(helmet.xssFilter())
+app.use(helmet.noSniff())
+app.use(helmet.noCache())
+app.use((req, res, next) => {
+  res.setHeader("X-Powered-By", "PHP 7.4.3");
+  next();
+});
 
 app.use('/public', express.static(process.cwd() + '/public'));
 app.use('/assets', express.static(process.cwd() + '/assets'));
@@ -33,15 +25,18 @@ app.use('/assets', express.static(process.cwd() + '/assets'));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+//For FCC testing purposes and enables user to connect from outside the hosting platform
+app.use(cors({origin: '*'})); 
+
 // Index page (static HTML)
 app.route('/')
   .get(function (req, res) {
     res.sendFile(process.cwd() + '/views/index.html');
-  });
+  }); 
 
-// For FCC testing purposes
+//For FCC testing purposes
 fccTestingRoutes(app);
-
+    
 // 404 Not Found Middleware
 app.use(function(req, res, next) {
   res.status(404)
@@ -49,78 +44,69 @@ app.use(function(req, res, next) {
     .send('Not Found');
 });
 
-// --- START SERVER ---
-const server = app.listen(process.env.PORT || 3000, () => {
-  console.log('Listening on port 3000');
-  if(process.env.NODE_ENV==='test') {
+const portNum = process.env.PORT || 3000;
+
+// Set up server and tests
+const server = app.listen(portNum, () => {
+  console.log(`Listening on port ${portNum}`);
+  if (process.env.NODE_ENV==='test') {
     console.log('Running Tests...');
     setTimeout(function () {
       try {
         runner.run();
-      } catch(e) {
+      } catch (error) {
         console.log('Tests are not valid:');
-        console.error(e);
+        console.error(error);
       }
     }, 1500);
   }
 });
 
-// --- GAME LOGIC ---
-const io = socket(server);
 
-let players = [];
-let collectible = {
-  x: Math.floor(Math.random() * 500),
-  y: Math.floor(Math.random() * 300),
-  value: 1,
-  id: Date.now()
-};
+//socketio setup
 
-io.on('connection', (socket) => {
-  console.log('New connection:', socket.id);
+const io = socket(server)
 
-  const newPlayer = {
-    x: Math.floor(Math.random() * 500),
-    y: Math.floor(Math.random() * 300),
-    score: 0,
-    id: socket.id
-  };
+let gameState = {
+  players: [],
+  collectible: getNewCollectable()
+}
+
+function getNewCollectable() {
+  const randX = Math.floor(Math.random() * 420 + 20)
+  const randY = Math.floor(Math.random() * 440 + 20)
+  const randId = Math.floor(Math.random() * 999999999)
+  return {x: randX, y: randY, value: 1, id: randId}
+}
+
+io.on('connection', client => {
+  client.emit('init', "YOU ARE CONNECTED!")
   
-  players.push(newPlayer);
-
-  socket.emit('init', { id: socket.id, players: players, coin: collectible });
-  socket.broadcast.emit('new-player', newPlayer);
-
-  socket.on('move-player', (dir, speed) => {
-    const player = players.find(p => p.id === socket.id);
-    if (player) {
-      if (dir === 'up') player.y -= speed;
-      if (dir === 'down') player.y += speed;
-      if (dir === 'left') player.x -= speed;
-      if (dir === 'right') player.x += speed;
-      io.emit('update-player', player);
+  client.on('updatePlayer', playerObj => {
+    
+    let updatedPlayersState = gameState.players.map(player => player.playerObj.id === playerObj.playerObj.id ? playerObj : player)
+    
+    const clientPlayer = gameState.players.filter(player => player.playerObj.id === playerObj.playerObj.id)
+    if (clientPlayer.length === 0) {
+      updatedPlayersState = [...updatedPlayersState, playerObj]
     }
-  });
 
-  socket.on('collision', ({ item, id }) => {
-    const player = players.find(p => p.id === id); 
-    if (player && item.id === collectible.id) {
-      player.score += collectible.value;
-      collectible = {
-        x: Math.floor(Math.random() * 500),
-        y: Math.floor(Math.random() * 300),
-        value: 1,
-        id: Date.now()
-      };
-      io.emit('update-player', player);
-      io.emit('update-coin', collectible);
+    gameState.players = updatedPlayersState
+    io.emit('updatedGameState', gameState)
+  })
+
+  client.on('refresh-collectible', (boolean) => {
+    if (boolean) {
+      gameState.collectible = getNewCollectable()
+      io.emit('updatedGameState', gameState)
     }
-  });
+  })
 
-  socket.on('disconnect', () => {
-    players = players.filter(p => p.id !== socket.id);
-    io.emit('remove-player', socket.id);
-  });
-});
+  client.on('disconnect', (reason) => {
+    const updatedPlayersState = gameState.players.filter(player => player.playerObj.id !== client.id)
+    gameState.players = updatedPlayersState
+    io.emit('updatedGameState', gameState)
+  })
+})
 
-module.exports = app;
+module.exports = app; // For testing
