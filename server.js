@@ -10,11 +10,21 @@ const runner = require('./test-runner.js');
 
 const app = express();
 
-// --- SECURITY HEADERS (Helmet v3.21.3) - MUST BE FIRST ---
+// --- SECURITY HEADERS (Helmet v3.21.3) ---
+// These must be applied BEFORE any routes or static files
+
+// 1. Prevent MIME type sniffing (Test 16)
 app.use(helmet.noSniff());
+
+// 2. Prevent XSS attacks (Test 17)
 app.use(helmet.xssFilter());
+
+// 3. Disable caching (Test 18)
 app.use(helmet.noCache());
+
+// 4. Hide/Spoof X-Powered-By header (Test 19)
 app.use(helmet.hidePoweredBy({ setTo: 'PHP 7.4.3' }));
+
 // -----------------------------------------
 
 app.use('/public', express.static(process.cwd() + '/public'));
