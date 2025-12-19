@@ -3,36 +3,39 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const expect = require('chai');
 const socket = require('socket.io');
-const helmet = require('helmet');
+const nocache = require('nocache');
 
 const fccTestingRoutes = require('./routes/fcctesting.js');
 const runner = require('./test-runner.js');
 
 const app = express();
 
-// --- 1. SECURITY & HEADER CONFIGURATION ---
-// We manually set these headers to satisfy all FreeCodeCamp tests (16-19)
-// preventing issues with newer versions of Helmet.
+// --- CRITICAL SECURITY SECTION ---
+
+// 1. Disable the default "X-Powered-By: Express" header so we can spoof it later
+app.disable('x-powered-by');
+
+// 2. Force Security Headers manually
+// This middleware runs for EVERY request before anything else
 app.use(function (req, res, next) {
-  // Prevent MIME sniffing (Test 16)
-  res.set('X-Content-Type-Options', 'nosniff');
-
-  // Prevent XSS attacks (Test 17)
-  res.set('X-XSS-Protection', '1; mode=block');
-
-  // Prevent Caching (Test 18)
-  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.set('Pragma', 'no-cache');
-  res.set('Expires', '0');
-  res.set('Surrogate-Control', 'no-store');
-
-  // Spoof the Powered-By header (Test 19)
-  res.set('X-Powered-By', 'PHP 7.4.3');
-
+  // Test 16: Prevent sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  
+  // Test 17: Prevent XSS (Browser-side)
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  
+  // Test 19: Spoof the Powered-By header
+  res.setHeader('X-Powered-By', 'PHP 7.4.3');
+  
   next();
 });
 
-// --- 2. STATIC FILES & MIDDLEWARE ---
+// 3. Prevent Caching (Test 18)
+// nocache() is more robust than manual headers for this specific test
+app.use(nocache());
+
+// ---------------------------------
+
 app.use('/public', express.static(process.cwd() + '/public'));
 app.use('/assets', express.static(process.cwd() + '/assets'));
 
@@ -55,7 +58,7 @@ app.use(function(req, res, next) {
     .send('Not Found');
 });
 
-// --- 3. START SERVER ---
+// --- START SERVER ---
 const server = app.listen(process.env.PORT || 3000, () => {
   console.log('Listening on port 3000');
   if(process.env.NODE_ENV==='test') {
@@ -71,7 +74,7 @@ const server = app.listen(process.env.PORT || 3000, () => {
   }
 });
 
-// --- 4. GAME LOGIC (SOCKET.IO) ---
+// --- GAME LOGIC ---
 const io = socket(server);
 
 let players = [];
@@ -85,7 +88,6 @@ let collectible = {
 io.on('connection', (socket) => {
   console.log('New connection:', socket.id);
 
-  // Create new player object
   const newPlayer = {
     x: Math.floor(Math.random() * 500),
     y: Math.floor(Math.random() * 300),
@@ -95,13 +97,9 @@ io.on('connection', (socket) => {
   
   players.push(newPlayer);
 
-  // Send initialization data to the client who just connected
   socket.emit('init', { id: socket.id, players: players, coin: collectible });
-
-  // Broadcast new player to everyone else
   socket.broadcast.emit('new-player', newPlayer);
 
-  // Handle movement
   socket.on('move-player', (dir, speed) => {
     const player = players.find(p => p.id === socket.id);
     if (player) {
@@ -109,39 +107,29 @@ io.on('connection', (socket) => {
       if (dir === 'down') player.y += speed;
       if (dir === 'left') player.x -= speed;
       if (dir === 'right') player.x += speed;
-      
-      // Sync update to everyone
       io.emit('update-player', player);
     }
   });
 
-  // Handle collision/scoring
   socket.on('collision', ({ item, id }) => {
     const player = players.find(p => p.id === id); 
-    
-    // Check if the item ID matches the current server collectible
     if (player && item.id === collectible.id) {
       player.score += collectible.value;
-
-      // Respawn collectible
       collectible = {
         x: Math.floor(Math.random() * 500),
         y: Math.floor(Math.random() * 300),
         value: 1,
         id: Date.now()
       };
-
       io.emit('update-player', player);
       io.emit('update-coin', collectible);
     }
   });
 
-  // Handle disconnect
   socket.on('disconnect', () => {
-    console.log('Disconnected:', socket.id);
     players = players.filter(p => p.id !== socket.id);
     io.emit('remove-player', socket.id);
   });
 });
 
-module.exports = app; // For testing
+module.exports = app;
